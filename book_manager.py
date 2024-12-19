@@ -5,6 +5,7 @@ from urllib.parse import urlparse, quote
 from typing import List, Optional, Dict
 from bs4 import BeautifulSoup
 from io import BytesIO
+import requests
 
 from logger import setup_logger
 from config import SUPPORTED_FORMATS, BOOK_LANGUAGE
@@ -217,15 +218,22 @@ def download_book(book_id: str, title: str) -> Optional[BytesIO]:
     ]
 
     for link in download_links:
-        try:
-            download_url = _get_download_url(link, title)
-            if download_url:
-                logger.info(f"Downloading {title} from {download_url}")
-                return network.download_url(download_url)
-        except Exception as e:
-            logger.error(f"Failed to download from {link}: {e}")
-            continue
-    
+            try:
+                logger.info(f"Attempting to download from {link}")
+                response = requests.get(link, stream=True)
+                response.raise_for_status()
+                
+                # Check if we got actual content
+                if response.content:
+                    logger.info(f"Successfully downloaded from {link}")
+                    return BytesIO(response.content)
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to download from {link}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error downloading from {link}: {e}")
+        
+    logger.error(f"Failed to download book with ID {book_id} and title {title}")
     return None
 
 def _get_download_url(link: str, title: str) -> Optional[str]:
@@ -247,6 +255,11 @@ def _get_download_url(link: str, title: str) -> Optional[str]:
         if get_section:
             href = get_section[0].parent['href']
             parsed = urlparse(href)
+            logger.info(f"Parsed URL: {parsed} from href: {href}")
+            if not parsed.netloc:
+                parsed.netloc = "libgen.li"
+            if not parsed.scheme:
+                parsed.scheme = "https"
             return f"{parsed.scheme}://{parsed.netloc}/{href}"
             
     elif link.startswith("https://library.lol/fiction/"):
